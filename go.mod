@@ -1,3 +1,3 @@
 module github.com/jaw0/acconfig
 
-go 1.15
+go 1.17

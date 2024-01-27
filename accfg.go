@@ -22,9 +22,12 @@ import (
 type conf struct {
 	file   string
 	lineNo int
+	info   map[reflect.Type]fieldInfo
 }
 
-const DEBUG = true
+type fieldInfo map[string][]int
+
+const DEBUG = false
 
 // Read reads a config file into the struct
 func Read(file string, cf interface{}) error {
@@ -61,30 +64,41 @@ func (c *conf) read(f io.Reader, cf interface{}) error {
 	return nil
 }
 
-func (c *conf) learnConf(cf interface{}) map[string]int {
+func (c *conf) learnConf(cf interface{}) fieldInfo {
 
-	var info = make(map[string]int)
+	var info = make(map[string][]int)
 	var val = reflect.ValueOf(cf).Elem()
 
 	if val.Kind() != reflect.Struct {
 		return nil
 	}
 
-	for i := 0; i < val.NumField(); i++ {
-		// use lower cased field name
-		name := strings.ToLower(val.Type().Field(i).Name)
-		kind := val.Field(i).Kind().String()
-		tags := val.Type().Field(i).Tag
+	typ := val.Type()
+
+	// cache field info
+	if c.info == nil {
+		c.info = make(map[reflect.Type]fieldInfo)
+	}
+	if f, ok := c.info[typ]; ok {
+		return f
+	}
+
+	sf := reflect.VisibleFields(typ)
+	for i := range sf {
+		name := strings.ToLower(sf[i].Name)
+		kind := sf[i].Type.String()
+		tags := sf[i].Tag
 
 		// override default name
 		if n, ok := tags.Lookup("accfg"); ok {
 			name = n
 		}
 
-		info[name] = i
+		info[name] = sf[i].Index
 		debugf("lrn cf> %s \t%s\t%v\n", name, kind, tags)
 	}
 
+	c.info[typ] = info
 	return info
 }
 
@@ -92,7 +106,7 @@ type stringUnmarshaler interface {
 	UnmarshalString(string) error
 }
 
-func (c *conf) checkAndStore(cf interface{}, info map[string]int, k string, v string, extra string) error {
+func (c *conf) checkAndStore(cf interface{}, info fieldInfo, k string, v string, extra []string) error {
 
 	i, ok := info[k]
 	if !ok {
@@ -100,8 +114,13 @@ func (c *conf) checkAndStore(cf interface{}, info map[string]int, k string, v st
 	}
 
 	var cfe = reflect.ValueOf(cf).Elem()
-	var cfv = cfe.Field(i)
-	var tags = cfe.Type().Field(i).Tag
+	var cfv = cfe.FieldByIndex(i)
+	var tags = cfe.Type().FieldByIndex(i).Tag
+
+	return c.checkAndStoreField(cfv, tags, k, v, extra)
+}
+
+func (c *conf) checkAndStoreField(cfv reflect.Value, tags reflect.StructTag, k string, v string, extra []string) error {
 
 	iv := cfv
 	if iv.Kind() != reflect.Pointer && iv.Type().Name() != "" && iv.CanAddr() {
@@ -137,7 +156,11 @@ func (c *conf) checkAndStore(cf interface{}, info map[string]int, k string, v st
 			tv = make(map[string]bool)
 			cfv.Set(reflect.ValueOf(tv))
 		}
-		tv[v] = true
+		if len(extra) > 0 {
+			tv[v] = parseBool(extra[0])
+		} else {
+			tv[v] = true
+		}
 		return nil
 
 	case map[string]struct{}:
@@ -146,6 +169,42 @@ func (c *conf) checkAndStore(cf interface{}, info map[string]int, k string, v st
 			cfv.Set(reflect.ValueOf(tv))
 		}
 		tv[v] = struct{}{}
+
+		// permit multiple fields: "param key1 key2 key3"
+		for _, x := range extra {
+			tv[x] = struct{}{}
+		}
+		return nil
+
+	case map[string]string:
+		if len(extra) == 0 {
+			return fmt.Errorf("syntax error for %s/%s: value expected", k, v)
+		}
+		if tv == nil {
+			tv = make(map[string]string)
+			cfv.Set(reflect.ValueOf(tv))
+		}
+		tv[v] = extra[0]
+		return nil
+
+	case map[string]interface{}:
+		if len(extra) == 0 {
+			return fmt.Errorf("syntax error for %s/%s: value expected", k, v)
+		}
+		if tv == nil {
+			tv = make(map[string]interface{})
+			cfv.Set(reflect.ValueOf(tv))
+		}
+		tv[v] = extra[0]
+		return nil
+
+	case []string:
+		tv = append(tv, v)
+		// permit multiple strings: "param value1 value2 value3"
+		if len(extra) > 0 {
+			tv = append(tv, extra...)
+		}
+		cfv.Set(reflect.ValueOf(tv))
 		return nil
 
 	default:
@@ -183,9 +242,20 @@ func (c *conf) checkAndStore(cf interface{}, info map[string]int, k string, v st
 		cfv.SetBool(parseBool(v))
 
 	case reflect.Slice:
-		switch cfv.Interface().(type) {
-		case []string:
-			cfv.Set(reflect.Append(cfv, reflect.ValueOf(v)))
+		var typ = cfv.Type().Elem()
+		// permit multiple: "param value1 value2 value3"
+		vals := make([]string, 0, len(extra)+1)
+		vals = append(vals, v)
+		vals = append(vals, extra...)
+
+		for _, v := range vals {
+			// create elem
+			elem := reflect.New(typ)
+			err := c.checkAndStoreField(elem.Elem(), tags, k, v, nil)
+			if err != nil {
+				return err
+			}
+			cfv.Set(reflect.Append(cfv, elem.Elem()))
 		}
 
 	default:
@@ -200,8 +270,8 @@ func (c *conf) readConfig(f *bufio.Reader, cf interface{}, isBlock bool) error {
 	var cfinfo = c.learnConf(cf)
 
 	for {
-		key, delim, err := c.readToken(f, true)
-		debugf(">> tok %v, %v, %v", key, delim, err)
+		tok, err := c.readLine(f)
+		debugf(">> tok %v, %v", tok, err)
 
 		if err == io.EOF {
 			return nil
@@ -209,27 +279,25 @@ func (c *conf) readConfig(f *bufio.Reader, cf interface{}, isBlock bool) error {
 		if err != nil {
 			return err
 		}
+		if len(tok) == 0 {
+			continue
+		}
+
+		key := tok[0]
+
 		if isBlock && key == "}" {
 			return nil
 		}
 
 		var val string
-		var extra string
+		var extra []string
 
-		if delim == ' ' {
-			val, delim, err = c.readToken(f, false)
-			debugf(">>> tok/val %v, %v, %v", val, delim, err)
-			if err != nil {
-				return err
-			}
+		if len(tok) > 1 {
+			val = tok[1]
+		}
 
-			if delim != '\n' {
-				extra, delim, err = c.readToken(f, false)
-				debugf(">>> tok/ext %v, %v, %v", extra, delim, err)
-				if delim != '\n' {
-					eatLine(f)
-				}
-			}
+		if len(tok) > 2 {
+			extra = tok[2:]
 		}
 
 		switch {
@@ -281,6 +349,28 @@ func (c *conf) includeFile(file string) string {
 
 }
 
+func (c *conf) readLine(f *bufio.Reader) ([]string, error) {
+
+	var res []string
+
+	for {
+		s, delim, err := c.readToken(f, len(res) == 0)
+		debugf(">> tok %v, %v, %v\n", s, delim, err)
+
+		if err != nil {
+			return nil, err
+		}
+
+		if s != "" {
+			res = append(res, s)
+		}
+
+		if delim == '\n' {
+			return res, nil
+		}
+	}
+}
+
 func (c *conf) readToken(f *bufio.Reader, orcolon bool) (string, int, error) {
 	var buf []byte
 
@@ -297,15 +387,11 @@ func (c *conf) readToken(f *bufio.Reader, orcolon bool) (string, int, error) {
 			if err != nil {
 				return "", -1, err
 			}
-			if len(buf) != 0 {
-				return string(buf), '\n', nil
-			}
-			continue
+
+			return string(buf), '\n', nil
+
 		case '\n':
-			if len(buf) != 0 {
-				return string(buf), '\n', nil
-			}
-			continue
+			return string(buf), '\n', nil
 
 		case '"', '\'':
 			// read until matching quote
@@ -373,8 +459,8 @@ func (c *conf) readQuoted(f *bufio.Reader, delim byte) ([]byte, error) {
 func (c *conf) readMap(f *bufio.Reader, cf interface{}) error {
 
 	for {
-		key, delim, err := c.readToken(f, true)
-		debugf(">> map/tok %v, %v, %v", key, delim, err)
+		tok, err := c.readLine(f)
+		debugf(">> tok %v, %v", tok, err)
 
 		if err == io.EOF {
 			return nil
@@ -382,18 +468,20 @@ func (c *conf) readMap(f *bufio.Reader, cf interface{}) error {
 		if err != nil {
 			return err
 		}
+		if len(tok) == 0 {
+			continue
+		}
+
+		key := tok[0]
+
 		if key == "}" {
 			return nil
 		}
 
 		var val string
-		if delim == ' ' {
-			val, delim, err = c.readToken(f, false)
-			if err != nil {
-				return err
-			}
+		if len(tok) > 1 {
+			val = tok[1]
 		}
-
 		debugf(">>> %s => %s\n", key, val)
 
 		switch m := cf.(type) {
@@ -401,13 +489,21 @@ func (c *conf) readMap(f *bufio.Reader, cf interface{}) error {
 			m[key] = val
 		case map[string]interface{}:
 			m[key] = val
+		case map[string]bool:
+			if len(tok) > 2 {
+				m[key] = parseBool(tok[2])
+			} else {
+				m[key] = true
+			}
+		case map[string]struct{}:
+			m[key] = struct{}{}
 		default:
 			return fmt.Errorf("invalid map type %T, try map[string]string", cf)
 		}
 	}
 }
 
-func (c *conf) readBlock(f *bufio.Reader, sect string, cf interface{}, info map[string]int) error {
+func (c *conf) readBlock(f *bufio.Reader, sect string, cf interface{}, info fieldInfo) error {
 
 	i, ok := info[sect]
 	if !ok {
@@ -415,15 +511,15 @@ func (c *conf) readBlock(f *bufio.Reader, sect string, cf interface{}, info map[
 	}
 
 	var cfe = reflect.ValueOf(cf).Elem()
-	var cft = cfe.Type().Field(i).Type
+	var cft = cfe.Type().FieldByIndex(i).Type
 
 	if cft.Kind() == reflect.Map {
-		newcf := cfe.Field(i)
+		newcf := cfe.FieldByIndex(i)
 
 		if newcf.IsNil() {
 			// create new map
 			newcf = reflect.MakeMap(cft)
-			cfe.Field(i).Set(newcf)
+			cfe.FieldByIndex(i).Set(newcf)
 		}
 
 		return c.readMap(f, newcf.Interface())
@@ -431,18 +527,18 @@ func (c *conf) readBlock(f *bufio.Reader, sect string, cf interface{}, info map[
 
 	// *struct - disabled to simplify user code (no nil)
 	if false && cft.Kind() == reflect.Pointer {
-		s := cfe.Field(i)
+		s := cfe.FieldByIndex(i)
 		if s.IsNil() {
 			// create struct
 			s = reflect.New(cft.Elem())
-			cfe.Field(i).Set(s)
+			cfe.FieldByIndex(i).Set(s)
 		}
 		return c.readConfig(f, s.Interface(), true)
 	}
 
 	if cft.Kind() == reflect.Struct {
 		// nested struct
-		var cfv = cfe.Field(i).Addr().Interface()
+		var cfv = cfe.FieldByIndex(i).Addr().Interface()
 		return c.readConfig(f, cfv, true)
 	}
 
@@ -458,7 +554,7 @@ func (c *conf) readBlock(f *bufio.Reader, sect string, cf interface{}, info map[
 	// init newcf
 	// ...
 
-	var cfv = cfe.Field(i)
+	var cfv = cfe.FieldByIndex(i)
 	cfv.Set(reflect.Append(cfv, reflect.ValueOf(newcf)))
 
 	err := c.readConfig(f, newcf, true)
