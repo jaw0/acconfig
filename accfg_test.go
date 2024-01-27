@@ -448,3 +448,56 @@ func TestNested(t *testing.T) {
 	}
 
 }
+
+func TestDotted(t *testing.T) {
+
+	type object struct {
+		Name string
+	}
+	type stuff struct {
+		Param object
+	}
+
+	txt := bytes.NewBufferString("param.name gizmo\n")
+
+	var data stuff
+
+	conf := conf{file: "test"}
+	err := conf.read(txt, &data)
+
+	if err != nil {
+		t.Errorf("failed: %v", err)
+	}
+	if data.Param.Name != "gizmo" {
+		t.Errorf("failed: expected gizmo, got %+v", data)
+	}
+
+}
+
+func TestDotted2(t *testing.T) {
+
+	type object struct {
+		Name string
+	}
+	type thing struct {
+		Object object
+	}
+	type stuff struct {
+		Param thing
+	}
+
+	txt := bytes.NewBufferString("param.object.name gizmo\n")
+
+	var data stuff
+
+	conf := conf{file: "test"}
+	err := conf.read(txt, &data)
+
+	if err != nil {
+		t.Errorf("failed: %v", err)
+	}
+	if data.Param.Object.Name != "gizmo" {
+		t.Errorf("failed: expected gizmo, got %+v", data)
+	}
+
+}

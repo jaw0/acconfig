@@ -110,7 +110,29 @@ func (c *conf) checkAndStore(cf interface{}, info fieldInfo, k string, v string,
 
 	i, ok := info[k]
 	if !ok {
-		return fmt.Errorf("invalid param '%s'", k)
+		// is it a dotted key (param.param)
+		kp := strings.Split(k, ".")
+		if len(kp) == 1 {
+			return fmt.Errorf("invalid param '%s'", k)
+		}
+
+		for ki, kk := range kp[:len(kp)-1] {
+			i, ok = info[kk]
+			if !ok {
+				return fmt.Errorf("invalid param '%s'", k)
+			}
+			var cfe = reflect.ValueOf(cf).Elem()
+			var cfv = cfe.FieldByIndex(i)
+
+			// dotted - only for structs
+			if cfv.Kind() != reflect.Struct {
+				return fmt.Errorf("invalid type for '%s' %T", k, cfv.Interface())
+			}
+
+			k = kp[ki+1]
+			cf = cfv.Addr().Interface()
+			info = c.learnConf(cf)
+		}
 	}
 
 	var cfe = reflect.ValueOf(cf).Elem()
