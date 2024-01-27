@@ -1,0 +1,53 @@
+
+* go package to read config file
+
+* Example
+#+begin_src go
+import "github.com/jaw0/acconfig"
+
+type Thing struct {
+    Name string
+    Size int32
+}
+
+type Config struct {
+    Field    string
+    Field2   string `accfg:"girth"`
+    Value    int32
+    Doit     bool
+    Flag     map[string]bool
+    Tag      []string
+    Start    time.Time
+    Elapsed  time.Duration
+    Thing    []*Thing
+}
+
+var cf Config
+err := acconfig.Read("/path/file", &cf)
+
+#+end_src
+
+#+begin_src conf
+field    value
+value    123
+doit     yes
+start    2024-01-01T02:03:04Z
+elapsed  1m
+girth    "very very"	# important comment
+
+# another important comment
+flag slithytove
+flag borogrove
+
+tag  bandersnatch
+tag  jubjubtree
+
+thing {
+    name    momerath
+    size    123
+}
+
+# read more config
+include "more.conf"
+
+#+end_src
