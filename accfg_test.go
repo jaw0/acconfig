@@ -30,7 +30,13 @@ func TestReadLine(t *testing.T) {
 		{false, "field: value \n", []string{"field", "value"}},
 		{false, "field value\n", []string{"field", "value"}},
 		{false, "field value \n", []string{"field", "value"}},
+		{false, " field  value \n", []string{"field", "value"}},
 		{false, "field \"value \" extra # comment\n", []string{"field", "value ", "extra"}},
+		{false, "\n", nil},
+		{false, " # comment\n", nil},
+		{true, "field \"value\n", nil},
+		{true, "field value", nil},
+		{true, "", nil},
 	}
 
 	for _, td := range tests {
@@ -153,9 +159,9 @@ param {
 
 	type stuff struct {
 		Field    string
-		Field2   string `accfg:"girth"`
+		Field2   string `ac/name:"girth"`
 		Value    int32
-		Duration int64 `convert:"duration"`
+		Duration int64 `ac/convert:"duration"`
 		Doit     bool
 		Flag     map[string]bool
 		Set      map[string]struct{}

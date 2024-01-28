@@ -12,7 +12,7 @@ type Thing struct {
 
 type Config struct {
     Field    string
-    Field2   string `accfg:"girth"`
+    Field2   string `ac/name:"girth"`
     Value    int32
     Doit     bool
     Flag     map[string]bool

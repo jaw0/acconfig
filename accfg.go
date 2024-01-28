@@ -27,7 +27,7 @@ type conf struct {
 
 type fieldInfo map[string][]int
 
-const DEBUG = false
+const dEBUG = false
 
 // Read reads a config file into the struct
 func Read(file string, cf interface{}) error {
@@ -90,7 +90,7 @@ func (c *conf) learnConf(cf interface{}) fieldInfo {
 		tags := sf[i].Tag
 
 		// override default name
-		if n, ok := tags.Lookup("accfg"); ok {
+		if n, ok := tags.Lookup("ac/name"); ok {
 			name = n
 		}
 
@@ -238,7 +238,7 @@ func (c *conf) checkAndStoreField(cfv reflect.Value, tags reflect.StructTag, k s
 		cfv.SetString(v)
 
 	case reflect.Int, reflect.Int32, reflect.Int64:
-		conv, _ := tags.Lookup("convert")
+		conv, _ := tags.Lookup("ac/convert")
 		var ix int64
 		var err error
 
@@ -249,7 +249,7 @@ func (c *conf) checkAndStoreField(cfv reflect.Value, tags reflect.StructTag, k s
 				return fmt.Errorf("invalid value for '%s' (expected duration)\n", k)
 			}
 		default:
-			ix, err = strconv.ParseInt(v, 0, 32)
+			ix, err = strconv.ParseInt(v, 0, 64)
 			if err != nil {
 				return fmt.Errorf("invalid value for '%s' (expected number)\n", k)
 			}
@@ -599,7 +599,7 @@ func eatLine(f *bufio.Reader) error {
 }
 
 func debugf(txt string, args ...interface{}) {
-	if DEBUG {
+	if dEBUG {
 		fmt.Printf(txt, args...)
 	}
 }
