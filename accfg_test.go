@@ -137,6 +137,12 @@ header2 {
     flowrate    high
 }
 
+cost {
+    sugar	1.23
+    flour	2.45
+}
+cost eggs 8.99
+
 # string map - indidually
 header  refer altavista
 header2 refer altavista
@@ -171,6 +177,7 @@ param {
 		Elapsed  time.Duration
 		Header   map[string]string
 		Header2  map[string]interface{}
+		Cost     map[string]float64
 		Param    thing
 	}
 
@@ -238,6 +245,12 @@ param {
 	}
 	if data.Header2["refer"] != "altavista" {
 		t.Errorf("read config failed: failed to read map: %+v", data.Header2)
+	}
+	if data.Cost["eggs"] != 8.99 {
+		t.Errorf("read config failed: failed to read map: %+v", data.Cost)
+	}
+	if data.Cost["sugar"] != 1.23 {
+		t.Errorf("read config failed: failed to read map: %+v", data.Cost)
 	}
 
 }

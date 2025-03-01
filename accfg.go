@@ -149,6 +149,8 @@ func (c *conf) checkAndStoreField(cfv reflect.Value, tags reflect.StructTag, k s
 		// convert to pointer type, to find pointer methods
 		iv = iv.Addr()
 	}
+
+	var err error
 	switch tv := iv.Interface().(type) {
 	case stringUnmarshaler:
 		err := tv.UnmarshalString(v)
@@ -208,6 +210,57 @@ func (c *conf) checkAndStoreField(cfv reflect.Value, tags reflect.StructTag, k s
 		}
 		tv[v] = extra[0]
 		return nil
+
+	case map[string]float64:
+		if len(extra) == 0 {
+			return fmt.Errorf("syntax error for %s/%s: value expected", k, v)
+		}
+		if tv == nil {
+			tv = make(map[string]float64)
+			cfv.Set(reflect.ValueOf(tv))
+		}
+		tv[v], err = parseFloat64(extra[0])
+		return err
+	case map[string]float32:
+		if len(extra) == 0 {
+			return fmt.Errorf("syntax error for %s/%s: value expected", k, v)
+		}
+		if tv == nil {
+			tv = make(map[string]float32)
+			cfv.Set(reflect.ValueOf(tv))
+		}
+		tv[v], err = parseFloat32(extra[0])
+		return err
+	case map[string]int64:
+		if len(extra) == 0 {
+			return fmt.Errorf("syntax error for %s/%s: value expected", k, v)
+		}
+		if tv == nil {
+			tv = make(map[string]int64)
+			cfv.Set(reflect.ValueOf(tv))
+		}
+		tv[v], err = parseInt64(extra[0])
+		return err
+	case map[string]int32:
+		if len(extra) == 0 {
+			return fmt.Errorf("syntax error for %s/%s: value expected", k, v)
+		}
+		if tv == nil {
+			tv = make(map[string]int32)
+			cfv.Set(reflect.ValueOf(tv))
+		}
+		tv[v], err = parseInt32(extra[0])
+		return err
+	case map[string]int:
+		if len(extra) == 0 {
+			return fmt.Errorf("syntax error for %s/%s: value expected", k, v)
+		}
+		if tv == nil {
+			tv = make(map[string]int)
+			cfv.Set(reflect.ValueOf(tv))
+		}
+		tv[v], err = parseInt(extra[0])
+		return err
 
 	case map[string]interface{}:
 		if len(extra) == 0 {
@@ -509,6 +562,16 @@ func (c *conf) readMap(f *bufio.Reader, cf interface{}) error {
 		switch m := cf.(type) {
 		case map[string]string:
 			m[key] = val
+		case map[string]float64:
+			m[key], err = parseFloat64(val)
+		case map[string]float32:
+			m[key], err = parseFloat32(val)
+		case map[string]int64:
+			m[key], err = parseInt64(val)
+		case map[string]int32:
+			m[key], err = parseInt32(val)
+		case map[string]int:
+			m[key], err = parseInt(val)
 		case map[string]interface{}:
 			m[key] = val
 		case map[string]bool:
@@ -521,6 +584,9 @@ func (c *conf) readMap(f *bufio.Reader, cf interface{}) error {
 			m[key] = struct{}{}
 		default:
 			return fmt.Errorf("invalid map type %T, try map[string]string", cf)
+		}
+		if err != nil {
+			return err
 		}
 	}
 }
@@ -642,4 +708,25 @@ func parseBool(v string) bool {
 		return true
 	}
 	return false
+}
+
+func parseFloat64(s string) (float64, error) {
+	v, err := strconv.ParseFloat(s, 64)
+	return v, err
+}
+func parseFloat32(s string) (float32, error) {
+	v, err := strconv.ParseFloat(s, 32)
+	return float32(v), err
+}
+func parseInt64(s string) (int64, error) {
+	v, err := strconv.ParseInt(s, 0, 64)
+	return v, err
+}
+func parseInt32(s string) (int32, error) {
+	v, err := strconv.ParseInt(s, 0, 64)
+	return int32(v), err
+}
+func parseInt(s string) (int, error) {
+	v, err := strconv.ParseInt(s, 0, 64)
+	return int(v), err
 }
